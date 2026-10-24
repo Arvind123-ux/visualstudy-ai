@@ -25,7 +25,7 @@ Two backends, switched by one line in `backend/.env`:
 
 ## Run it
 
-    git clone https://github.com/YOUR_USERNAME/visualstudy-ai.git
+    git clone https://github.com/Vivan217/visualstudy-ai.git
     cd visualstudy-ai/backend
     python3 -m venv venv && source venv/bin/activate
     pip install flask flask-cors requests python-dotenv

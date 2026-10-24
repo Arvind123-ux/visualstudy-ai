@@ -2,17 +2,20 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VisualStudy AI</title>
 <style>
   body{font-family:system-ui;max-width:860px;margin:30px auto;padding:0 16px;background:#f6f7fb;color:#222}
   .card{background:#fff;border-radius:12px;padding:16px;margin:12px 0;box-shadow:0 1px 4px #0001}
   button{padding:8px 14px;border:0;border-radius:8px;background:#4f46e5;color:#fff;cursor:pointer}
+  button:disabled{opacity:.5;cursor:wait}
   select{padding:7px;border-radius:8px}
-  img{max-width:100%;border-radius:8px}
+  img{max-width:100%;max-height:320px;border-radius:8px;margin-top:10px}
   .opt{display:block;width:100%;text-align:left;background:#eef;color:#222;margin:4px 0}
   .ok{background:#bbf7d0!important}.bad{background:#fecaca!important}
   .warn{background:#fef3c7;padding:8px;border-radius:8px;margin:4px 0}
   .tabs button{background:#e5e7eb;color:#222;margin-right:6px}.tabs .on{background:#4f46e5;color:#fff}
+  #msg{margin-top:8px}
 </style>
 </head>
 <body>
@@ -21,44 +24,59 @@
   <input type="file" id="file" accept="image/*">
   <select id="lang"><option>English</option><option>Hindi</option></select>
   <select id="level"><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
-  <button onclick="go()">Analyse</button>
-  <div id="statusE1"></div>
-  <img id="preview">
+  <button id="goBtn" onclick="go()">Analyse</button>
+  <div id="msg"></div>
+  <img id="preview" alt="">
 </div>
 <div id="out"></div>
 
 <script>
 const API = "http://127.0.0.1:5000/api/analyze";
-let data, tab = "explain", score = 0;
+let data = null, tab = "explain", score = 0, answers = [];
 
-file.onchange = () => { preview.src = URL.createObjectURL(file.files[0]); };
+file.onchange = () => {
+  if (file.files[0]) preview.src = URL.createObjectURL(file.files[0]);
+};
 
 async function go() {
   if (!file.files[0]) return alert("Pehle image chuno");
-  statusE1.textContent = "⏳ Analysing... (local model me 1-2 min lag sakta hai)";
-  out.innerHTML = ""; score = 0;
+  msg.textContent = "⏳ Analysing... (local model me 1-2 min lag sakta hai)";
+  goBtn.disabled = true;
+  out.innerHTML = "";
+  score = 0; answers = []; tab = "explain";
+
   const fd = new FormData();
   fd.append("image", file.files[0]);
   fd.append("lang", lang.value);
   fd.append("level", level.value);
+
   try {
     const r = await fetch(API, { method: "POST", body: fd });
-    data = await r.json();
-    if (data.error) throw new Error(data.error);
-    statusE1.textContent = "";
+    let json;
+    try { json = await r.json(); }
+    catch { throw new Error("Backend se galat jawab aaya (status " + r.status + ")"); }
+    if (json.error) throw new Error(json.error);
+    data = json;
+    msg.textContent = "";
     render();
-  } catch (e) { statusE1.textContent = "❌ " + e.message; }
+  } catch (e) {
+    msg.textContent = "❌ " + e.message;
+  } finally {
+    goBtn.disabled = false;
+  }
 }
 
 function el(tag, text, cls) {
   const e = document.createElement(tag);
-  if (text) e.textContent = text;       // textContent: model output safe rehta hai
+  if (text) e.textContent = text;   // textContent: model ka output safe rehta hai
   if (cls) e.className = cls;
   return e;
 }
 
 function render() {
+  if (!data) return;
   out.innerHTML = "";
+
   const tabs = el("div", "", "tabs");
   ["explain", "quiz", "notes"].forEach(t => {
     const b = el("button", t.toUpperCase(), t === tab ? "on" : "");
@@ -68,6 +86,7 @@ function render() {
   out.appendChild(tabs);
 
   const c = el("div", "", "card");
+
   if (tab === "explain") {
     c.appendChild(el("h2", data.topic));
     c.appendChild(el("p", data.summary));
@@ -78,36 +97,43 @@ function render() {
       c.appendChild(d);
     });
     if ((data.uncertain || []).length) {
-      c.appendChild(el("h3", "⚠️ AI ko pakka nahi hai"));
+      c.appendChild(el("h3", "⚠️ AI ko in par pakka nahi hai"));
       data.uncertain.forEach(u => c.appendChild(el("div", u, "warn")));
     }
   }
+
   if (tab === "quiz") {
-    const sc = el("h3", "Score: " + score + " / " + (data.quiz || []).length);
-    c.appendChild(sc);
-    (data.quiz || []).forEach((q, i) => {
+    const quiz = data.quiz || [];
+    if (!quiz.length) c.appendChild(el("p", "Is diagram ke liye quiz nahi bana."));
+    else c.appendChild(el("h3", "Score: " + score + " / " + quiz.length));
+    quiz.forEach((q, i) => {
       c.appendChild(el("p", (i + 1) + ". " + q.q));
-      const why = el("div", "", "warn"); why.style.display = "none";
       q.options.forEach((o, j) => {
-        const b = el("button", o, "opt");
+        let cls = "opt";
+        if (answers[i] !== undefined) {
+          if (j === q.answer) cls += " ok";
+          else if (j === answers[i]) cls += " bad";
+        }
+        const b = el("button", o, cls);
         b.onclick = () => {
-          if (b.parentNode.dataset.done) return;
-          b.parentNode.dataset.done = 1;
-          b.classList.add(j === q.answer ? "ok" : "bad");
-          if (j === q.answer) { score++; sc.textContent = "Score: " + score + " / " + data.quiz.length; }
-          why.textContent = q.why; why.style.display = "block";
+          if (answers[i] !== undefined) return;
+          answers[i] = j;
+          if (j === q.answer) score++;
+          render();
         };
         c.appendChild(b);
       });
-      c.appendChild(why);
+      if (answers[i] !== undefined && q.why) c.appendChild(el("div", q.why, "warn"));
     });
   }
+
   if (tab === "notes") {
     c.appendChild(el("h2", "Revision Notes"));
     const ul = el("ul");
     (data.notes || []).forEach(n => ul.appendChild(el("li", n)));
     c.appendChild(ul);
   }
+
   out.appendChild(c);
 }
 </script>
